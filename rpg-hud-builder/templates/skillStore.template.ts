@@ -1,121 +1,111 @@
-/**
- * Zustand Store Template for RPG HUD
- * Customize: skill names, initial values, max values
- */
-
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import localforage from 'localforage';
 
-export interface XPPopupState {
-  amount: number;
-  isVisible: boolean;
-  x: number;
-  y: number;
+// 1. Define the Types (The Blueprint)
+export type ClassType = 'The Vanguard' | 'The Arcanist' | 'The Shadow' | 'Unassigned';
+
+export interface AttributeStats {
+  strength: number;
+  intelligence: number;
+  agility: number;
+  sense: number;
+  vitality: number;
 }
 
-export interface SkillState {
-  skills: {
-    // CUSTOMIZE: Add your skill dimensions here
-    strength: number;
-    intelligence: number;
-    agility: number;
-    sense: number;
-    vitality: number;
-    willpower: number;
-  };
-  totalXP: number;
-  xpPercentage: number;
-  completedQuests: string[];
-  lastUpdatedSkill: string | null;
-  xpPopup: XPPopupState;
+export interface Quest {
+  id: string;
+  title: string;
+  microSkill: string;
+  xpReward: number;
+  isCompleted: boolean;
+  isPenalty: boolean;
+}
+
+interface SystemState {
+  // Player Data
+  playerName: string;
+  playerClass: ClassType;
+  level: number;
+  currentXP: number;
+  nextLevelXP: number;
+  currentHP: number;
+  maxHP: number;
+  attributes: AttributeStats;
   
-  // Actions
-  incrementSkill: (skillName: keyof SkillState['skills'], amount: number) => void;
-  addXP: (amount: number) => void;
+  // Game State
+  hasCompletedOnboarding: boolean;
+  activeQuests: Quest[];
+  
+  // Actions (The Logic)
+  completeOnboarding: (name: string, chosenClass: ClassType) => void;
+  gainXP: (amount: number, attribute: keyof AttributeStats) => void;
+  takeDamage: (amount: number) => void;
   completeQuest: (questId: string) => void;
-  showXPPopup: (amount: number, x?: number, y?: number) => void;
-  hideXPPopup: () => void;
-  resetSkills: () => void;
 }
 
-// CUSTOMIZE: Initial skill values
-const INITIAL_SKILLS = {
-  strength: 75,
-  intelligence: 82,
-  agility: 68,
-  sense: 90,
-  vitality: 78,
-  willpower: 85,
-};
+// 2. The Math (XP Scaling Curve)
+const calculateNextLevelXP = (level: number) => Math.floor(100 * Math.pow(level, 1.5));
 
-// CUSTOMIZE: XP per level
-const MAX_XP_PER_LEVEL = 100;
+// 3. The Store (Zustand + localForage for offline saving)
+export const useSystemStore = create<SystemState>()(
+  persist(
+    (set, get) => ({
+      // Initial State
+      playerName: 'Player',
+      playerClass: 'Unassigned',
+      level: 1,
+      currentXP: 0,
+      nextLevelXP: 100,
+      currentHP: 100,
+      maxHP: 100,
+      attributes: { strength: 1, intelligence: 1, agility: 1, sense: 1, vitality: 1 },
+      hasCompletedOnboarding: false,
+      activeQuests: [],
 
-export const useSkillStore = create<SkillState>((set: any) => ({
-  skills: INITIAL_SKILLS,
-  totalXP: 0,
-  xpPercentage: 0,
-  completedQuests: [],
-  lastUpdatedSkill: null,
-  xpPopup: { amount: 0, isVisible: false, x: 0, y: 0 },
+      // Actions
+      completeOnboarding: (name, chosenClass) => set({
+        playerName: name,
+        playerClass: chosenClass,
+        hasCompletedOnboarding: true,
+      }),
 
-  incrementSkill: (skillName: keyof SkillState['skills'], amount: number) => {
-    set((state: SkillState) => ({
-      skills: {
-        ...state.skills,
-        [skillName]: Math.min(100, state.skills[skillName] + amount),
-      },
-      lastUpdatedSkill: skillName,
-    }));
+      gainXP: (amount, attribute) => set((state) => {
+        let newXP = state.currentXP + amount;
+        let newLevel = state.level;
+        let newNextLevelXP = state.nextLevelXP;
+        
+        // Level Up Logic
+        if (newXP >= state.nextLevelXP) {
+          newLevel += 1;
+          newXP = newXP - state.nextLevelXP; // Carry over leftover XP
+          newNextLevelXP = calculateNextLevelXP(newLevel);
+        }
 
-    // Reset indicator after animation
-    setTimeout(() => {
-      set({ lastUpdatedSkill: null });
-    }, 1000);
-  },
+        return {
+          currentXP: newXP,
+          level: newLevel,
+          nextLevelXP: newNextLevelXP,
+          attributes: {
+            ...state.attributes,
+            [attribute]: state.attributes[attribute] + 1
+          }
+        };
+      }),
 
-  addXP: (amount: number) => {
-    set((state: SkillState) => {
-      const newTotalXP = state.totalXP + amount;
-      const newXPPercentage = (newTotalXP % MAX_XP_PER_LEVEL);
-      return {
-        totalXP: newTotalXP,
-        xpPercentage: newXPPercentage,
-      };
-    });
-  },
+      takeDamage: (amount) => set((state) => ({
+        currentHP: Math.max(0, state.currentHP - amount)
+      })),
 
-  completeQuest: (questId: string) => {
-    set((state: SkillState) => ({
-      completedQuests: [...state.completedQuests, questId],
-    }));
-  },
-
-  showXPPopup: (amount: number, x: number = 0, y: number = 0) => {
-    set({
-      xpPopup: { amount, isVisible: true, x, y },
-    });
-
-    setTimeout(() => {
-      set({
-        xpPopup: { amount: 0, isVisible: false, x: 0, y: 0 },
-      });
-    }, 1500);
-  },
-
-  hideXPPopup: () => {
-    set({
-      xpPopup: { amount: 0, isVisible: false, x: 0, y: 0 },
-    });
-  },
-
-  resetSkills: () => {
-    set({
-      skills: INITIAL_SKILLS,
-      totalXP: 0,
-      xpPercentage: 0,
-      completedQuests: [],
-      lastUpdatedSkill: null,
-      xpPopup: { amount: 0, isVisible: false, x: 0, y: 0 },
-    });
-  },
-}));
+      completeQuest: (questId) => set((state) => ({
+        activeQuests: state.activeQuests.map(q => 
+          q.id === questId ? { ...q, isCompleted: true } : q
+        )
+      })),
+    }),
+    {
+      name: 'system-storage', // name of item in storage
+      storage: createJSONStorage(() => localforage), // Use IndexedDB so it never lags
+    }
+  )
+);
